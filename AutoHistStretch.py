@@ -40,7 +40,7 @@ def calculate_bounds(histogram, pixel_count, bin_size, hist_min):
     
     return min_val, max_val
 
-def histogram_scaling(image_path, output_path, centre_x_coord, centre_y_coord, hist_region_diameter, proportional=False):
+def histogram_scaling(image_path, output_path, centre_x_coord=None, centre_y_coord=None, hist_region_diameter=None, proportional=False):
     """
     Apply histogram scaling to an image based on a specified region.
     
@@ -55,53 +55,86 @@ def histogram_scaling(image_path, output_path, centre_x_coord, centre_y_coord, h
     Note:
     - When proportional=True, hist_region_diameter is a proportion of the x-dimension of the image.
     """
-    with Image.open(image_path) as img:
-        # Convert image to grayscale if it's not
-        if img.mode not in ('L', 'I;16'):
-            img = img.convert('L')
+    crop_variables = {
+        'X-coordinate': centre_x_coord,
+        'Y-coordinate': centre_y_coord,
+        'Region diameter': hist_region_diameter
+    }
+    try:
+        with Image.open(image_path) as img:
+            # Convert image to grayscale if it's not
+            if img.mode not in ('L', 'I;16'):
+                img = img.convert('L')
+            if img.mode not in ('L', 'I;16'):
+                print(f"Error: Could not convert image at {image_path} to grayscale.")
+                return
+            width, height = img.size
+    
+            # Convert to pixel values if proportional=True
+            if proportional:
+                if centre_x_coord is not None:
+                    centre_x_coord = int(centre_x_coord * width)
+                if centre_y_coord is not None:
+                    centre_y_coord = int(centre_y_coord * height)
+                if hist_region_diameter is not None:
+                    hist_region_diameter = int(hist_region_diameter * width)
+            
+            # Check if all crop variables are given
+            if all(crop_variables.values()):
+                half_diameter = hist_region_diameter // 2
+                left = max(centre_x_coord - half_diameter, 0)
+                top = max(centre_y_coord - half_diameter, 0)
+                right = min(centre_x_coord + half_diameter, width)
+                bottom = min(centre_y_coord + half_diameter, height)
         
-        width, height = img.size
+                # Crop the specified region for histogram calculation
+                crop_region = img.crop((left, top, right, bottom))
+            else:
+                # Check if any crop variable is given
+                any_vars_given = any(crop_variables.values())
+                if any_vars_given:
+                    missing_keys = [key for key, value in crop_variables.items() if value is None]
+                    print(f'Not all crop variables were given (missing: {", ".join(missing_keys)}), scaling whole-image histogram instead.')
+                else:
+                    print('Scaling whole-image histogram.')
+                crop_region = img
+    
+            # Compute histogram and statistics of the cropped region
+            crop_array = np.array(crop_region)
+            histogram, bin_edges = np.histogram(crop_array, bins=256)
+            hist_min = bin_edges[0]
+            bin_size = bin_edges[1] - bin_edges[0]
+            pixel_count = crop_array.size
+    
+            # Calculate min and max pixel values for scaling the whole image
+            min_val, max_val = calculate_bounds(histogram, pixel_count, bin_size, hist_min)
+    
+            # Apply histogram scaling to the original image
+            img_array = np.array(img)
+            img_stretched_array = np.clip((img_array - min_val) * (255 / (max_val - min_val)), 0, 255).astype('uint8')
+            img_stretched = Image.fromarray(img_stretched_array, 'L')
+    
+            # Save the scaled image
+            try:
+                img_stretched.save(output_path)
+            except Exception as e:
+                print(f"Error: Could not save the image. Details: {e}")
+                return
+    except FileNotFoundError:
+        print(f"Error: File {image_path} not found.")
+        return
+    except Image.UnidentifiedImageError:
+        print(f"Error: Unsupported image format for {image_path}.")
+        return
 
-        # Convert to pixel values if proportional=True
-        if proportional:
-            centre_x_coord = int(centre_x_coord * width)
-            centre_y_coord = int(centre_y_coord * height)
-            hist_region_diameter = int(hist_region_diameter * width)
-        
-        # Calculate cropping coordinates, ensuring they are within image boundaries
-        half_diameter = hist_region_diameter // 2
-        left = max(centre_x_coord - half_diameter, 0)
-        top = max(centre_y_coord - half_diameter, 0)
-        right = min(centre_x_coord + half_diameter, width)
-        bottom = min(centre_y_coord + half_diameter, height)
+if __name__ == '__main__':
+    # Example usage
+    # Replace these paths with actual file paths
+    image_path = "/media/tristanmanchester/SSD/Diamond/tigre/crop_test/test.tif"
+    output_path = "/media/tristanmanchester/SSD/Diamond/tigre/crop_test/test2.tif"
+    x_coord = 0.5  # Replace with actual x-coordinate or proportion of the x-dimension 
+    y_coord = 0.5  # Replace with actual y-coordinate or proportion of the y-dimension
+    diameter = 0.7  # Replace with actual diameter or proportion of the x-dimension
 
-        # Crop the specified region for histogram calculation
-        crop_region = img.crop((left, top, right, bottom))
+    histogram_scaling(image_path, output_path, centre_x_coord=x_coord, centre_y_coord=y_coord, hist_region_diameter=diameter, proportional=True)
 
-        # Compute histogram and statistics of the cropped region
-        crop_array = np.array(crop_region)
-        histogram, bin_edges = np.histogram(crop_array, bins=256)
-        hist_min = bin_edges[0]
-        bin_size = bin_edges[1] - bin_edges[0]
-        pixel_count = crop_array.size
-
-        # Calculate min and max pixel values for scaling the whole image
-        min_val, max_val = calculate_bounds(histogram, pixel_count, bin_size, hist_min)
-
-        # Apply histogram scaling to the original image
-        img_array = np.array(img)
-        img_stretched_array = np.clip((img_array - min_val) * (255 / (max_val - min_val)), 0, 255).astype('uint8')
-        img_stretched = Image.fromarray(img_stretched_array, 'L')
-
-        # Save the scaled image
-        img_stretched.save(output_path)
-
-# Example usage
-# Replace these paths with actual file paths
-image_path = "/path/to/original/image.jpg"
-output_path = "/path/to/scaled/image.jpg"
-centre_x_coord = 0.4  # Replace with actual x-coordinate or proportion of the x-dimension 
-centre_y_coord = 0.5  # Replace with actual y-coordinate or proportion of the y-dimension
-hist_region_diameter = 0.2  # Replace with actual diameter or proportion of the x-dimension
-
-histogram_scaling(image_path, output_path, centre_x_coord, centre_y_coord, hist_region_diameter, proportional=True)
